@@ -1,0 +1,42 @@
+<idea-plugin>
+    <id>com.aivcsassistant</id>
+    <name>AI VCS Assistant</name>
+    <vendor>Local Plugin</vendor>
+
+    <description><![CDATA[
+      Generates reviewable commit messages and editable pull request content from Git diffs.
+      It invokes the selected local AI CLI and only fills local UI fields;
+      it never commits, pushes, or creates pull requests.
+    ]]></description>
+
+    <depends>com.intellij.modules.platform</depends>
+    <depends>com.intellij.modules.vcs</depends>
+    <depends optional="true" config-file="github.xml">org.jetbrains.plugins.github</depends>
+    <depends optional="true" config-file="gitlab.xml">org.jetbrains.plugins.gitlab</depends>
+
+    <extensions defaultExtensionNs="com.intellij">
+        <applicationService serviceImplementation="com.aivcsassistant.AiVcsAssistantSettings"/>
+        <applicationConfigurable
+                id="com.aivcsassistant.settings"
+                displayName="AI VCS Assistant"
+                instance="com.aivcsassistant.AiVcsAssistantConfigurable"/>
+        <notificationGroup id="AI VCS Assistant" displayType="BALLOON"/>
+    </extensions>
+
+    <actions>
+        <action id="com.aivcsassistant.GenerateCommitMessage"
+                class="com.aivcsassistant.GenerateCommitMessageAction"
+                text="Generate Commit Message"
+                description="Generate a reviewable commit message from the selected changes"
+                icon="/icons/generateVcsText.svg">
+            <add-to-group group-id="Vcs.MessageActionGroup" anchor="first"/>
+            <keyboard-shortcut keymap="$default" first-keystroke="ctrl alt M"/>
+        </action>
+        <action id="com.aivcsassistant.GeneratePullRequestContent"
+                class="com.aivcsassistant.GeneratePullRequestContentAction"
+                text="Generate Pull Request Content"
+                description="Generate editable pull request subject and description from the current branch diff"
+                icon="/icons/generateVcsText.svg">
+        </action>
+    </actions>
+</idea-plugin>
