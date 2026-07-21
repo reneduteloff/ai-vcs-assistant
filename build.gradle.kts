@@ -30,6 +30,7 @@ kotlin {
 dependencies {
     intellijPlatform {
         intellijIdeaUltimate("2025.3")
+        bundledPlugin("org.jetbrains.plugins.terminal")
         pluginVerifier()
         zipSigner()
     }

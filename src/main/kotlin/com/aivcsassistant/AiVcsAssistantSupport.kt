@@ -7,6 +7,7 @@ import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.ide.CopyPasteManager
 import com.intellij.openapi.progress.ProgressIndicator
 import com.intellij.openapi.project.Project
+import com.intellij.terminal.frontend.toolwindow.TerminalToolWindowTabsManager
 import java.awt.datatransfer.StringSelection
 import java.io.File
 import java.nio.charset.StandardCharsets
@@ -29,13 +30,18 @@ object AiVcsAssistantSupport {
             .notify(project)
     }
 
-    fun notifyLoginRequired(project: Project, error: ProviderLoginRequiredException) {
+    fun notifyLoginRequired(project: Project, error: ProviderLoginRequiredException, repositoryRoot: Path) {
         NotificationGroupManager.getInstance()
             .getNotificationGroup("AI VCS Assistant")
             .createNotification(
-                "${error.providerName} requires login. Run the login command in a terminal, then retry generation.",
+                "${error.providerName} requires login. Open a terminal and finish authentication, then retry generation.",
                 error.details.take(1_000),
                 NotificationType.WARNING,
+            )
+            .addAction(
+                NotificationAction.createSimpleExpiring("Open login terminal") {
+                    openLoginTerminal(project, repositoryRoot, error.loginCommand)
+                },
             )
             .addAction(
                 NotificationAction.createSimpleExpiring("Copy login command") {
@@ -45,13 +51,18 @@ object AiVcsAssistantSupport {
             .notify(project)
     }
 
-    fun notifySetupRequired(project: Project, error: ProviderSetupRequiredException) {
+    fun notifySetupRequired(project: Project, error: ProviderSetupRequiredException, repositoryRoot: Path) {
         NotificationGroupManager.getInstance()
             .getNotificationGroup("AI VCS Assistant")
             .createNotification(
-                "${error.providerName} CLI setup is required. Run the setup commands in a terminal, then retry generation.",
+                "${error.providerName} CLI setup is required. Open a terminal for install/update commands, then retry generation.",
                 error.details.take(1_000),
                 NotificationType.WARNING,
+            )
+            .addAction(
+                NotificationAction.createSimpleExpiring("Open setup terminal") {
+                    openSetupTerminal(project, repositoryRoot, error.setupScript)
+                },
             )
             .addAction(
                 NotificationAction.createSimpleExpiring("Copy setup commands") {
@@ -432,6 +443,38 @@ object AiVcsAssistantSupport {
             PROVIDER_CURSOR -> listOf(executable.toString(), "login")
             else -> listOf(executable.toString())
         }
+
+    private fun openLoginTerminal(project: Project, repositoryRoot: Path, loginCommand: List<String>) {
+        ApplicationManager.getApplication().invokeLater {
+            try {
+                TerminalToolWindowTabsManager.getInstance(project)
+                    .createTabBuilder()
+                    .workingDirectory(repositoryRoot.toString())
+                    .tabName("AI Provider Login")
+                    .requestFocus(true)
+                    .shellCommand(loginCommand)
+                    .createTab()
+            } catch (ex: Exception) {
+                notify(project, "Could not open login terminal: ${ex.message ?: ex.javaClass.simpleName}", NotificationType.ERROR)
+            }
+        }
+    }
+
+    private fun openSetupTerminal(project: Project, repositoryRoot: Path, setupScript: String) {
+        ApplicationManager.getApplication().invokeLater {
+            try {
+                TerminalToolWindowTabsManager.getInstance(project)
+                    .createTabBuilder()
+                    .workingDirectory(repositoryRoot.toString())
+                    .tabName("AI Provider Setup")
+                    .requestFocus(true)
+                    .shellCommand(listOf("bash", "-lc", setupScript))
+                    .createTab()
+            } catch (ex: Exception) {
+                notify(project, "Could not open setup terminal: ${ex.message ?: ex.javaClass.simpleName}", NotificationType.ERROR)
+            }
+        }
+    }
 
     private fun copyToClipboard(project: Project, text: String, message: String) {
         ApplicationManager.getApplication().invokeLater {

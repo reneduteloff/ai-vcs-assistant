@@ -11,6 +11,7 @@
 
     <depends>com.intellij.modules.platform</depends>
     <depends>com.intellij.modules.vcs</depends>
+    <depends>org.jetbrains.plugins.terminal</depends>
     <depends optional="true" config-file="github.xml">org.jetbrains.plugins.github</depends>
     <depends optional="true" config-file="gitlab.xml">org.jetbrains.plugins.gitlab</depends>
 

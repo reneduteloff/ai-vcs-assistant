@@ -133,9 +133,9 @@ class GeneratePullRequestContentAction : AnAction() {
                         }
                     }
                 } catch (ex: AiVcsAssistantSupport.ProviderLoginRequiredException) {
-                    AiVcsAssistantSupport.notifyLoginRequired(project, ex)
+                    AiVcsAssistantSupport.notifyLoginRequired(project, ex, repositoryRoot)
                 } catch (ex: AiVcsAssistantSupport.ProviderSetupRequiredException) {
-                    AiVcsAssistantSupport.notifySetupRequired(project, ex)
+                    AiVcsAssistantSupport.notifySetupRequired(project, ex, repositoryRoot)
                 } catch (ex: PullRequestJsonParser.ParseException) {
                     ApplicationManager.getApplication().invokeLater {
                         Messages.showErrorDialog(

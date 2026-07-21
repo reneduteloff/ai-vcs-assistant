@@ -106,9 +106,9 @@ class GenerateCommitMessageAction : AnAction() {
                         )
                     }
                 } catch (ex: AiVcsAssistantSupport.ProviderLoginRequiredException) {
-                    AiVcsAssistantSupport.notifyLoginRequired(project, ex)
+                    AiVcsAssistantSupport.notifyLoginRequired(project, ex, repositoryRoot ?: Path.of(project.basePath ?: "."))
                 } catch (ex: AiVcsAssistantSupport.ProviderSetupRequiredException) {
-                    AiVcsAssistantSupport.notifySetupRequired(project, ex)
+                    AiVcsAssistantSupport.notifySetupRequired(project, ex, repositoryRoot ?: Path.of(project.basePath ?: "."))
                 } catch (ex: Exception) {
                     AiVcsAssistantSupport.notify(project, ex.message ?: ex.javaClass.simpleName, NotificationType.ERROR)
                 }
