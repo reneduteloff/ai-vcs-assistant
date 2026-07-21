@@ -565,10 +565,21 @@ object AiVcsAssistantSupport {
         }
 
         val matches = executableSearchDirectories()
-            .map { it.resolve(trimmed) }
-            .firstOrNull { Files.isRegularFile(it) && Files.isExecutable(it) }
+            .flatMap { directory -> executableNames(trimmed).map { directory.resolve(it) } }
+            .firstOrNull(::isRunnableFile)
         return matches ?: configuredPath
     }
+
+    private fun executableNames(executable: String): List<String> {
+        val extension = executable.substringAfterLast('.', "").lowercase()
+        if (File.separatorChar != '\\' || extension in setOf("exe", "cmd", "bat", "ps1")) {
+            return listOf(executable)
+        }
+        return listOf(executable, "$executable.exe", "$executable.cmd", "$executable.bat", "$executable.ps1")
+    }
+
+    private fun isRunnableFile(path: Path): Boolean =
+        Files.isRegularFile(path) && (File.separatorChar == '\\' || Files.isExecutable(path))
 
     private fun augmentPath(environment: MutableMap<String, String>, executable: Path) {
         val existingPath = environment["PATH"].orEmpty()
@@ -593,12 +604,40 @@ object AiVcsAssistantSupport {
 
     private fun fallbackExecutableDirectories(): List<Path> {
         val home = System.getProperty("user.home")?.let { Path.of(it) } ?: return emptyList()
-        return listOf(
+        val userLocalDirectories = listOf(
             home.resolve(".local/bin"),
             home.resolve("bin"),
             home.resolve(".npm-global/bin"),
+            home.resolve(".volta/bin"),
+            home.resolve(".asdf/shims"),
+            home.resolve(".bun/bin"),
             home.resolve(".nvm/current/bin"),
-        ) + nvmExecutableDirectories(home)
+        )
+        val unixDirectories = if (File.separatorChar == '/') {
+            listOf(
+                Path.of("/opt/homebrew/bin"),
+                Path.of("/usr/local/bin"),
+            )
+        } else {
+            emptyList()
+        }
+        val windowsDirectories = if (File.separatorChar == '\\') {
+            listOfNotNull(
+                System.getenv("APPDATA")?.let { Path.of(it).resolve("npm") },
+                System.getenv("LOCALAPPDATA")?.let { Path.of(it).resolve("Programs").resolve("nodejs") },
+                System.getenv("LOCALAPPDATA")?.let { Path.of(it).resolve("Volta").resolve("bin") },
+                System.getenv("LOCALAPPDATA")?.let { Path.of(it).resolve("Microsoft").resolve("WindowsApps") },
+                System.getenv("ProgramFiles")?.let { Path.of(it).resolve("nodejs") },
+                System.getenv("ProgramFiles(x86)")?.let { Path.of(it).resolve("nodejs") },
+                System.getenv("ChocolateyInstall")?.let { Path.of(it).resolve("bin") },
+                home.resolve("AppData").resolve("Roaming").resolve("npm"),
+                home.resolve("scoop").resolve("shims"),
+                Path.of("C:\\ProgramData\\chocolatey\\bin"),
+            )
+        } else {
+            emptyList()
+        }
+        return userLocalDirectories + unixDirectories + windowsDirectories + nvmExecutableDirectories(home)
     }
 
     private fun nvmExecutableDirectories(home: Path): List<Path> {
