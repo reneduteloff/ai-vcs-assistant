@@ -273,6 +273,33 @@ object AiVcsAssistantSupport {
     fun formatPullRequestList(items: List<String>): String =
         if (items.isEmpty()) "- No visible changes" else items.joinToString("\n") { "- $it" }
 
+    fun extractPullRequestCheckboxLabels(template: String): List<String> {
+        val checkboxPattern = Regex("""(?m)^\s*[-*]\s*\[\s]\s*(.+?)\s*$""")
+        return checkboxPattern.findAll(template)
+            .map { it.groupValues[1].trim() }
+            .filter(String::isNotBlank)
+            .distinctBy(::normalizeCheckboxLabel)
+            .toList()
+    }
+
+    fun checkPullRequestTemplateCheckboxes(description: String, labelsToCheck: List<String>): String {
+        val normalizedLabelsToCheck = labelsToCheck
+            .map(::normalizeCheckboxLabel)
+            .filter(String::isNotBlank)
+            .toSet()
+        if (normalizedLabelsToCheck.isEmpty()) return description
+
+        val checkboxPattern = Regex("""(?m)^(\s*[-*]\s*\[)\s(]\s*)(.+?)\s*$""")
+        return checkboxPattern.replace(description) { match ->
+            val label = match.groupValues[3].trim()
+            if (normalizeCheckboxLabel(label) in normalizedLabelsToCheck) {
+                "${match.groupValues[1]}x${match.groupValues[2]}$label"
+            } else {
+                match.value
+            }
+        }
+    }
+
     fun applyPullRequestDescriptionTemplate(
         template: String,
         values: Map<String, String>,
@@ -331,6 +358,12 @@ object AiVcsAssistantSupport {
         } else {
             items.mapIndexed { index, item -> "${index + 1}. $item" }.joinToString("\n")
         }
+
+    private fun normalizeCheckboxLabel(label: String): String =
+        label
+            .lowercase()
+            .replace(Regex("""[^\p{L}\p{N}]+"""), " ")
+            .trim()
 
     private fun replaceSection(template: String, headingPattern: Regex, body: String): String {
         val match = headingPattern.find(template) ?: return template

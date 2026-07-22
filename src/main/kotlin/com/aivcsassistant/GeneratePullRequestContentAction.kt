@@ -32,6 +32,7 @@ import javax.swing.Action
 import javax.swing.JButton
 import javax.swing.JComboBox
 import javax.swing.JComponent
+import javax.swing.JLabel
 import javax.swing.JPanel
 import javax.swing.JRootPane
 import javax.swing.JTextArea
@@ -51,7 +52,11 @@ class GeneratePullRequestContentAction : AnAction() {
         generate(project, currentUiRoot(e))
     }
 
-    fun generate(project: Project, pullRequestUiRoot: Component?) {
+    fun generate(
+        project: Project,
+        pullRequestUiRoot: Component?,
+        fallbackOutput: ((String, String) -> Unit)? = null,
+    ) {
         val basePath = project.basePath
         if (basePath.isNullOrBlank()) {
             AiVcsAssistantSupport.notify(project, "Could not determine the project directory.", NotificationType.WARNING)
@@ -94,7 +99,13 @@ class GeneratePullRequestContentAction : AnAction() {
                     indicator.checkCanceled()
                     indicator.text = "Asking ${AiVcsAssistantSupport.currentProviderName()} for pull request content"
                     val settings = AiVcsAssistantSettings.getInstance().state
-                    val raw = AiVcsAssistantSupport.runProvider(repositoryRoot, buildPrompt(diff), indicator)
+                    val descriptionTemplate = pullRequestDescriptionTemplate(repositoryRoot, settings)
+                    val checkboxLabels = AiVcsAssistantSupport.extractPullRequestCheckboxLabels(descriptionTemplate)
+                    val raw = AiVcsAssistantSupport.runProvider(
+                        repositoryRoot,
+                        buildPrompt(diff, checkboxLabels),
+                        indicator,
+                    )
                     val parsed = PullRequestJsonParser.parse(AiVcsAssistantSupport.sanitize(raw))
 
                     val branchIdentifier = AiVcsAssistantSupport.extractBranchIdentifier(
@@ -110,18 +121,20 @@ class GeneratePullRequestContentAction : AnAction() {
                         ),
                         parsed.title,
                     )
-                    val descriptionTemplate = pullRequestDescriptionTemplate(repositoryRoot, settings)
-                    val description = AiVcsAssistantSupport.applyPullRequestDescriptionTemplate(
-                        descriptionTemplate,
-                        mapOf(
-                            "branch" to branchIdentifier,
-                            "title" to parsed.title,
-                            "summary" to parsed.summary,
-                            "changes" to AiVcsAssistantSupport.formatPullRequestList(parsed.changes),
-                            "testing" to AiVcsAssistantSupport.formatPullRequestList(parsed.testing),
-                            "provider" to AiVcsAssistantSupport.currentProviderName(settings),
+                    val description = AiVcsAssistantSupport.checkPullRequestTemplateCheckboxes(
+                        AiVcsAssistantSupport.applyPullRequestDescriptionTemplate(
+                            descriptionTemplate,
+                            mapOf(
+                                "branch" to branchIdentifier,
+                                "title" to parsed.title,
+                                "summary" to parsed.summary,
+                                "changes" to AiVcsAssistantSupport.formatPullRequestList(parsed.changes),
+                                "testing" to AiVcsAssistantSupport.formatPullRequestList(parsed.testing),
+                                "provider" to AiVcsAssistantSupport.currentProviderName(settings),
+                            ),
+                            parsed.summary,
                         ),
-                        parsed.summary,
+                        parsed.checkboxesToCheck,
                     )
 
                     ApplicationManager.getApplication().invokeLater {
@@ -131,6 +144,8 @@ class GeneratePullRequestContentAction : AnAction() {
                                 "Pull request content generated. Review or edit it before creating the pull request.",
                                 NotificationType.INFORMATION,
                             )
+                        } else if (fallbackOutput != null) {
+                            fallbackOutput(subject, description)
                         } else {
                             PullRequestContentDialog(project, subject, description).show()
                         }
@@ -154,8 +169,21 @@ class GeneratePullRequestContentAction : AnAction() {
         })
     }
 
-    private fun buildPrompt(diff: String): String =
-        """
+    private fun buildPrompt(diff: String, checkboxLabels: List<String>): String {
+        val checkboxInstruction = if (checkboxLabels.isEmpty()) {
+            "No pull request template checkboxes were found."
+        } else {
+            """
+            Pull request template checkbox labels:
+            ${checkboxLabels.joinToString("\n") { "- $it" }}
+
+            In "checkboxesToCheck", include only exact checkbox labels from that list when the diff clearly supports
+            checking them. Prefer type/category checkboxes. Do not check process, review, compliance, documentation,
+            screenshot, or local-testing checklist items unless the diff itself clearly proves that item is satisfied.
+            """.trimIndent()
+        }
+
+        return """
             Generate pull request content from the branch diff below.
             Describe only changes visible in the diff.
             Be specific and non-generic.
@@ -164,6 +192,7 @@ class GeneratePullRequestContentAction : AnAction() {
             Avoid repetition between title, summary, and change list.
             Keep the title concise.
             Do not include a branch identifier, ticket identifier, markdown, or commentary outside JSON.
+            $checkboxInstruction
             Return exactly one JSON object in this shape:
             {
               "title": "Add partner cancellation endpoint",
@@ -175,6 +204,10 @@ class GeneratePullRequestContentAction : AnAction() {
               ],
               "testing": [
                 "Unit tests added"
+              ],
+              "checkboxesToCheck": [
+                "🚀 Feature",
+                "🧪 Test"
               ]
             }
 
@@ -182,6 +215,7 @@ class GeneratePullRequestContentAction : AnAction() {
             $diff
             DIFF END
         """.trimIndent()
+    }
 
     private fun pullRequestDescriptionTemplate(repositoryRoot: Path, settings: AiVcsAssistantSettings.State): String {
         val repositoryTemplate = repositoryRoot.resolve(".github").resolve("pull_request_template.md")
@@ -207,28 +241,51 @@ class GeneratePullRequestContentAction : AnAction() {
     }
 
     private fun fillPullRequestFields(root: Component?, subject: String, description: String): Boolean {
-        val fields = editableTextComponents(root)
-            .filter { it.isShowing && it.isEnabled }
-            .distinct()
+        val fields = editableTextFieldCandidates(root)
+
+        val labelledSubjectField = fields
+            .filter { it.labelText.contains("title") || it.labelText.contains("subject") }
+            .minByOrNull { it.index }
+            ?.field
+        val labelledDescriptionField = fields
+            .filter { it.field !== labelledSubjectField }
+            .filter {
+                it.labelText.contains("description") ||
+                    it.labelText.contains("body") ||
+                    it.labelText.contains("details")
+            }
+            .minByOrNull { it.index }
+            ?.field
+
+        if (labelledSubjectField != null && labelledDescriptionField != null) {
+            fillText(labelledSubjectField, labelledDescriptionField, subject, description)
+            return true
+        }
 
         if (fields.size !in 2..12) return false
 
         val descriptionField = fields
+            .map { it.field }
             .filter { it is JTextArea || it.height >= 80 || it.text.contains('\n') }
             .maxByOrNull { it.height * it.width }
 
         val subjectField = fields
+            .map { it.field }
             .filter { it !== descriptionField }
             .filter { it.height <= 60 || !it.text.contains('\n') }
             .minByOrNull { it.text.length }
 
         if (subjectField == null || descriptionField == null) return false
 
+        fillText(subjectField, descriptionField, subject, description)
+        return true
+    }
+
+    private fun fillText(subjectField: JTextComponent, descriptionField: JTextComponent, subject: String, description: String) {
         subjectField.text = subject
         descriptionField.text = description
         subjectField.caretPosition = subjectField.text.length
         descriptionField.caretPosition = 0
-        return true
     }
 
     private fun nearestPullRequestFormRoot(component: Component?): Component? {
@@ -243,18 +300,81 @@ class GeneratePullRequestContentAction : AnAction() {
 
     private fun isLikelyPullRequestFormRoot(component: Component): Boolean {
         if (!component.isShowing) return false
-        val fields = editableTextComponents(component)
-            .filter { it.isShowing && it.isEnabled }
-            .distinct()
+        val fields = editableTextFieldCandidates(component)
+        val hasLabelledSubjectField = fields.any {
+            it.labelText.contains("title") || it.labelText.contains("subject")
+        }
+        val hasLabelledDescriptionField = fields.any {
+            it.labelText.contains("description") ||
+                it.labelText.contains("body") ||
+                it.labelText.contains("details")
+        }
+        if (hasLabelledSubjectField && hasLabelledDescriptionField) return true
+
         if (fields.size !in 2..12) return false
 
-        val hasSubjectField = fields.any { field -> field !is JTextArea && field.height <= 60 && !field.text.contains('\n') }
-        val hasDescriptionField = fields.any { field -> field is JTextArea || field.height >= 80 || field.text.contains('\n') }
+        val hasSubjectField = fields.any { candidate ->
+            candidate.field !is JTextArea && candidate.field.height <= 60 && !candidate.field.text.contains('\n')
+        }
+        val hasDescriptionField = fields.any { candidate ->
+            candidate.field is JTextArea || candidate.field.height >= 80 || candidate.field.text.contains('\n')
+        }
         return hasSubjectField && hasDescriptionField
     }
 
-    private fun editableTextComponents(component: Component?): List<JTextComponent> {
-        return components(component).filterIsInstance<JTextComponent>().filter { it.isEditable }
+    private fun editableTextFieldCandidates(component: Component?): List<TextFieldCandidate> {
+        val allComponents = components(component)
+        val fields = allComponents
+            .filterIsInstance<JTextComponent>()
+            .filter { it.isEditable && it.isShowing && it.isEnabled }
+            .distinct()
+        return fields.mapIndexed { index, field ->
+            TextFieldCandidate(field, fieldLabelText(field, allComponents), index)
+        }
+    }
+
+    private fun fieldLabelText(field: JTextComponent, allComponents: List<Component>): String {
+        val directLabelText = allComponents
+            .filterIsInstance<JLabel>()
+            .filter { it.labelFor === field }
+            .joinToString(" ") { it.text.orEmpty() }
+
+        return listOf(
+            directLabelText,
+            field.accessibleContext?.accessibleName.orEmpty(),
+            field.name.orEmpty(),
+            field.toolTipText.orEmpty(),
+            nearbyLabelText(field, allComponents),
+        )
+            .joinToString(" ")
+            .lowercase()
+    }
+
+    private fun nearbyLabelText(field: JTextComponent, allComponents: List<Component>): String {
+        val parentComponents = field.parent?.components?.toList().orEmpty()
+        val fieldIndexInParent = parentComponents.indexOf(field)
+        val siblingLabels = if (fieldIndexInParent > 0) {
+            parentComponents
+                .take(fieldIndexInParent)
+                .takeLast(3)
+                .filterIsInstance<JLabel>()
+                .joinToString(" ") { it.text.orEmpty() }
+        } else {
+            ""
+        }
+
+        val fieldIndex = allComponents.indexOf(field)
+        val precedingLabels = if (fieldIndex > 0) {
+            allComponents
+                .take(fieldIndex)
+                .takeLast(8)
+                .filterIsInstance<JLabel>()
+                .joinToString(" ") { it.text.orEmpty() }
+        } else {
+            ""
+        }
+
+        return "$siblingLabels $precedingLabels"
     }
 
     private fun components(component: Component?): List<Component> {
@@ -276,6 +396,12 @@ class GeneratePullRequestContentAction : AnAction() {
             .split(Regex("""\s+|[→←]"""))
             .map { it.trim().removePrefix("refs/heads/").removePrefix("refs/remotes/") }
             .filter { it.matches(Regex("""[A-Za-z0-9][A-Za-z0-9._/-]*""")) }
+
+    private data class TextFieldCandidate(
+        val field: JTextComponent,
+        val labelText: String,
+        val index: Int,
+    )
 }
 
 private class PullRequestContentDialog(
@@ -325,6 +451,7 @@ data class PullRequestContent(
     val summary: String,
     val changes: List<String>,
     val testing: List<String>,
+    val checkboxesToCheck: List<String>,
 )
 
 object PullRequestJsonParser {
@@ -347,11 +474,17 @@ object PullRequestJsonParser {
             return value.mapNotNull { (it as? String)?.trim()?.takeIf(String::isNotBlank) }
         }
 
+        fun optionalStringListField(name: String): List<String> {
+            val value = obj[name] as? List<*> ?: return emptyList()
+            return value.mapNotNull { (it as? String)?.trim()?.takeIf(String::isNotBlank) }
+        }
+
         return PullRequestContent(
             title = stringField("title"),
             summary = stringField("summary"),
             changes = stringListField("changes"),
             testing = stringListField("testing"),
+            checkboxesToCheck = optionalStringListField("checkboxesToCheck"),
         )
     }
 

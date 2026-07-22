@@ -35,9 +35,14 @@ class GenerateCommitMessageAction : AnAction() {
         generate(project, e.getData(PlatformCoreDataKeys.CONTEXT_COMPONENT), e.dataContext)
     }
 
-    fun generate(project: Project, contextComponent: Component?, dataContext: DataContext?) {
+    fun generate(
+        project: Project,
+        contextComponent: Component?,
+        dataContext: DataContext?,
+        fallbackOutput: ((String) -> Unit)? = null,
+    ) {
         val messageField = findCommitMessageField(contextComponent)
-        if (messageField == null) {
+        if (messageField == null && fallbackOutput == null) {
             AiVcsAssistantSupport.notify(project, "Open the Commit tool window and place the cursor in the commit-message field.", NotificationType.WARNING)
             return
         }
@@ -104,8 +109,12 @@ class GenerateCommitMessageAction : AnAction() {
                     }
 
                     ApplicationManager.getApplication().invokeLater {
-                        messageField.text = message
-                        messageField.requestFocusInWindow()
+                        if (messageField != null) {
+                            messageField.text = message
+                            messageField.requestFocusInWindow()
+                        } else {
+                            fallbackOutput?.invoke(message)
+                        }
                         AiVcsAssistantSupport.notify(
                             project,
                             "Commit message generated. Review or edit it before committing.",
