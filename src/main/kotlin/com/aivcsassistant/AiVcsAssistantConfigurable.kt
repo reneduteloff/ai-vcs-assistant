@@ -40,9 +40,6 @@ class AiVcsAssistantConfigurable : Configurable {
     private val prefixBranchCheckBox = JBCheckBox("Prefix commit message with branch identifier")
     private val branchIdentifierRegexField = JBTextField()
     private val commitMessageTemplateArea = templateArea()
-    private val defaultPullRequestTargetBranchField = JBTextField()
-    private val pullRequestSubjectTemplateArea = templateArea()
-    private val pullRequestDescriptionTemplateArea = templateArea(rows = 8)
     private val timeoutSpinner = JSpinner(SpinnerNumberModel(120, 15, 600, 15))
     private var panel: JPanel? = null
 
@@ -64,11 +61,6 @@ class AiVcsAssistantConfigurable : Configurable {
             .addLabeledComponent(JBLabel("Branch identifier regular expression:"), branchIdentifierRegexField, 1, false)
             .addLabeledComponent(JBLabel("Commit message template:"), JBScrollPane(commitMessageTemplateArea), 1, false)
             .addComponent(JBLabel("Supported placeholders: {branch}, {message}, {provider}"))
-            .addComponent(sectionLabel("Pull Request Content"))
-            .addLabeledComponent(JBLabel("Default pull request target branch:"), defaultPullRequestTargetBranchField, 1, false)
-            .addLabeledComponent(JBLabel("Pull request subject template:"), JBScrollPane(pullRequestSubjectTemplateArea), 1, false)
-            .addLabeledComponent(JBLabel("Pull request description template:"), JBScrollPane(pullRequestDescriptionTemplateArea), 1, false)
-            .addComponent(JBLabel("Supported placeholders: {branch}, {title}, {summary}, {changes}, {testing}, {provider}"))
             .addComponentFillVertically(JPanel(), 0)
             .panel
         reset()
@@ -93,9 +85,6 @@ class AiVcsAssistantConfigurable : Configurable {
             prefixBranchCheckBox.isSelected != state.prefixCommitMessageWithBranchIdentifier ||
             branchIdentifierRegexField.text.trim() != state.branchIdentifierRegex ||
             commitMessageTemplateArea.text.trim() != state.commitMessageTemplate ||
-            defaultPullRequestTargetBranchField.text.trim() != state.defaultPullRequestTargetBranch ||
-            pullRequestSubjectTemplateArea.text.trim() != state.pullRequestSubjectTemplate ||
-            pullRequestDescriptionTemplateArea.text.trim() != state.pullRequestDescriptionTemplate ||
             (timeoutSpinner.value as Int) != state.timeoutSeconds
     }
 
@@ -116,10 +105,6 @@ class AiVcsAssistantConfigurable : Configurable {
         state.prefixCommitMessageWithBranchIdentifier = prefixBranchCheckBox.isSelected
         state.branchIdentifierRegex = branchIdentifierRegexField.text.trim().ifBlank { "[A-Z][A-Z0-9]+-\\d+" }
         state.commitMessageTemplate = commitMessageTemplateArea.text.trim().ifBlank { "{branch}: {message}" }
-        state.defaultPullRequestTargetBranch = defaultPullRequestTargetBranchField.text.trim().ifBlank { "main" }
-        state.pullRequestSubjectTemplate = pullRequestSubjectTemplateArea.text.trim().ifBlank { "{branch}: {title}" }
-        state.pullRequestDescriptionTemplate = pullRequestDescriptionTemplateArea.text.trim()
-            .ifBlank { DEFAULT_PULL_REQUEST_DESCRIPTION_TEMPLATE }
         state.timeoutSeconds = timeoutSpinner.value as Int
     }
 
@@ -140,9 +125,6 @@ class AiVcsAssistantConfigurable : Configurable {
         prefixBranchCheckBox.isSelected = state.prefixCommitMessageWithBranchIdentifier
         branchIdentifierRegexField.text = state.branchIdentifierRegex
         commitMessageTemplateArea.text = state.commitMessageTemplate
-        defaultPullRequestTargetBranchField.text = state.defaultPullRequestTargetBranch
-        pullRequestSubjectTemplateArea.text = state.pullRequestSubjectTemplate
-        pullRequestDescriptionTemplateArea.text = state.pullRequestDescriptionTemplate
         timeoutSpinner.value = state.timeoutSeconds
         updateProviderOptions()
     }

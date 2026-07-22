@@ -1,14 +1,17 @@
 package com.aivcsassistant
 
+import com.intellij.ide.DataManager
 import com.intellij.notification.NotificationType
 import com.intellij.openapi.actionSystem.ActionUpdateThread
 import com.intellij.openapi.actionSystem.AnAction
 import com.intellij.openapi.actionSystem.AnActionEvent
+import com.intellij.openapi.actionSystem.DataContext
 import com.intellij.openapi.actionSystem.PlatformCoreDataKeys
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.progress.ProgressIndicator
 import com.intellij.openapi.progress.ProgressManager
 import com.intellij.openapi.progress.Task
+import com.intellij.openapi.project.Project
 import com.intellij.openapi.vcs.VcsDataKeys
 import com.intellij.openapi.vcs.changes.Change
 import com.intellij.openapi.vcs.changes.ChangesUtil
@@ -29,13 +32,17 @@ class GenerateCommitMessageAction : AnAction() {
 
     override fun actionPerformed(e: AnActionEvent) {
         val project = e.project ?: return
-        val messageField = findCommitMessageField(e)
+        generate(project, e.getData(PlatformCoreDataKeys.CONTEXT_COMPONENT), e.dataContext)
+    }
+
+    fun generate(project: Project, contextComponent: Component?, dataContext: DataContext?) {
+        val messageField = findCommitMessageField(contextComponent)
         if (messageField == null) {
             AiVcsAssistantSupport.notify(project, "Open the Commit tool window and place the cursor in the commit-message field.", NotificationType.WARNING)
             return
         }
 
-        val changes = selectedChanges(e)
+        val changes = selectedChanges(contextComponent, dataContext)
         if (changes.isEmpty()) {
             AiVcsAssistantSupport.notify(project, "No changes are selected in the Commit tool window.", NotificationType.WARNING)
             return
@@ -116,8 +123,17 @@ class GenerateCommitMessageAction : AnAction() {
         })
     }
 
-    private fun selectedChanges(e: AnActionEvent): List<Change> {
-        val workflowHandler = e.getData(VcsDataKeys.COMMIT_WORKFLOW_HANDLER)
+    private fun selectedChanges(contextComponent: Component?, dataContext: DataContext?): List<Change> =
+        selectedChanges(dataContext).ifEmpty {
+            dataContexts(contextComponent)
+                .asSequence()
+                .map(::selectedChanges)
+                .firstOrNull(List<Change>::isNotEmpty)
+                .orEmpty()
+        }
+
+    private fun selectedChanges(dataContext: DataContext?): List<Change> {
+        val workflowHandler = dataContext?.let { VcsDataKeys.COMMIT_WORKFLOW_HANDLER.getData(it) }
             ?: return emptyList()
 
         val handlerClass = workflowHandler.javaClass
@@ -148,9 +164,19 @@ class GenerateCommitMessageAction : AnAction() {
         }
     }
 
-    private fun findCommitMessageField(e: AnActionEvent): JTextComponent? {
-        val contextComponent = e.getData(PlatformCoreDataKeys.CONTEXT_COMPONENT)
-        findTextComponent(contextComponent)?.let { return it }
+    private fun dataContexts(component: Component?): List<DataContext> {
+        if (component == null) return emptyList()
+        val result = mutableListOf<DataContext>()
+        fun collect(current: Component) {
+            result.add(DataManager.getInstance().getDataContext(current))
+            if (current is Container) current.components.forEach(::collect)
+        }
+        collect(component)
+        return result
+    }
+
+    private fun findCommitMessageField(contextComponent: Component?): JTextComponent? {
+        likelyCommitMessageField(contextComponent)?.let { return it }
 
         val focused = KeyboardFocusManager.getCurrentKeyboardFocusManager().focusOwner
         findTextComponent(focused)?.let { return it }
@@ -163,6 +189,13 @@ class GenerateCommitMessageAction : AnAction() {
         return null
     }
 
+    private fun likelyCommitMessageField(component: Component?): JTextComponent? {
+        val fields = editableTextComponents(component)
+        return fields
+            .filter { it.isShowing && it.isEnabled }
+            .maxByOrNull { it.height * it.width }
+    }
+
     private fun findTextComponent(component: Component?): JTextComponent? {
         if (component is JTextComponent && component.isEditable) return component
         if (component is Container) {
@@ -171,6 +204,17 @@ class GenerateCommitMessageAction : AnAction() {
             }
         }
         return null
+    }
+
+    private fun editableTextComponents(component: Component?): List<JTextComponent> {
+        if (component == null) return emptyList()
+        val result = mutableListOf<JTextComponent>()
+        fun collect(current: Component) {
+            if (current is JTextComponent && current.isEditable) result.add(current)
+            if (current is Container) current.components.forEach(::collect)
+        }
+        collect(component)
+        return result
     }
 
     private fun determineSingleRepository(absolutePaths: List<String>): Path {

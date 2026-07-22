@@ -1,6 +1,6 @@
 # AI VCS Assistant for IntelliJ IDEA
 
-Local IntelliJ plugin for generating a reviewable Git commit message and editable pull request content with an existing local AI CLI login.
+Local IntelliJ plugin for generating a reviewable Git commit message with an existing local AI CLI login.
 
 ## Compatibility
 
@@ -21,6 +21,6 @@ The installable archive is written to `build/distributions/`.
 
 Open the Commit tool window, select changes, place the cursor in the commit-message field, and click **Generate Commit Message**. The plugin fills the field only.
 
-Use **Generate Pull Request Content** to choose a target branch and generate an editable pull request subject and description from `git diff <target-branch>...HEAD`. The plugin never commits, pushes, or creates pull requests.
+When the Commit, Pull Requests, or Merge Requests tool window is visible, the right-side **AI VCS Assistant** tool window is available. Use it to generate a commit message into the Commit tool window, or to generate pull request title and description into the visible pull request form.
 
 In settings, choose the AI provider under **AI Provider**. Built-in presets are available for Codex (`codex`), Antigravity (`agy`), GitHub Copilot (`copilot`), and Claude (`claude`); use **Custom** for another CLI by configuring the executable, arguments, output mode, and prompt delivery.

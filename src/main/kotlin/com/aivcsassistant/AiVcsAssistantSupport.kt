@@ -270,6 +270,36 @@ object AiVcsAssistantSupport {
         return cleaned.ifBlank { fallback.trim() }
     }
 
+    fun formatPullRequestList(items: List<String>): String =
+        if (items.isEmpty()) "- No visible changes" else items.joinToString("\n") { "- $it" }
+
+    fun applyPullRequestDescriptionTemplate(
+        template: String,
+        values: Map<String, String>,
+        fallback: String,
+    ): String {
+        val placeholderPattern = Regex("""\{(?:branch|title|summary|changes|testing|provider)}""")
+        if (placeholderPattern.containsMatchIn(template)) {
+            return applyTemplate(template, values, fallback, preserveLineBreaks = true)
+        }
+
+        var result = template.trim()
+        result = replaceSection(
+            result,
+            Regex("""(?im)^##\s*(?:📌\s*)?Summary\s*$"""),
+            listOfNotNull(
+                values["summary"]?.takeIf(String::isNotBlank),
+                values["changes"]?.takeIf(String::isNotBlank)?.let { "### Changes\n$it" },
+            ).joinToString("\n\n"),
+        )
+        result = replaceSection(
+            result,
+            Regex("""(?im)^##\s*(?:🧪\s*)?Testing Steps\s*$"""),
+            formatNumberedPullRequestList(values["testing"].orEmpty().lines().map { it.removePrefix("- ").trim() }.filter(String::isNotBlank)),
+        )
+        return result.trim().ifBlank { fallback.trim() }
+    }
+
     private fun cleanTemplateResult(value: String): String {
         var result = value.trim()
         result = result.replace(Regex("""\s+"""), " ")
@@ -293,6 +323,24 @@ object AiVcsAssistantSupport {
             .joinToString("\n")
             .replace(Regex("""\n{3,}"""), "\n\n")
             .trim()
+    }
+
+    private fun formatNumberedPullRequestList(items: List<String>): String =
+        if (items.isEmpty()) {
+            "1. No test changes are visible in the diff."
+        } else {
+            items.mapIndexed { index, item -> "${index + 1}. $item" }.joinToString("\n")
+        }
+
+    private fun replaceSection(template: String, headingPattern: Regex, body: String): String {
+        val match = headingPattern.find(template) ?: return template
+        val nextHeading = Regex("""(?m)^##\s+""").find(template, match.range.last + 1)
+        val sectionEnd = nextHeading?.range?.first ?: template.length
+        return template.substring(0, match.range.last + 1) +
+            "\n\n" +
+            body.trim() +
+            "\n\n" +
+            template.substring(sectionEnd).trimStart()
     }
 
     private fun runGit(repositoryRoot: Path, args: List<String>, timeoutSeconds: Long): String {

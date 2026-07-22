@@ -48,7 +48,10 @@ class GeneratePullRequestContentAction : AnAction() {
 
     override fun actionPerformed(e: AnActionEvent) {
         val project = e.project ?: return
-        val pullRequestUiRoot = currentUiRoot(e)
+        generate(project, currentUiRoot(e))
+    }
+
+    fun generate(project: Project, pullRequestUiRoot: Component?) {
         val basePath = project.basePath
         if (basePath.isNullOrBlank()) {
             AiVcsAssistantSupport.notify(project, "Could not determine the project directory.", NotificationType.WARNING)
@@ -108,14 +111,14 @@ class GeneratePullRequestContentAction : AnAction() {
                         parsed.title,
                     )
                     val descriptionTemplate = pullRequestDescriptionTemplate(repositoryRoot, settings)
-                    val description = applyPullRequestDescriptionTemplate(
+                    val description = AiVcsAssistantSupport.applyPullRequestDescriptionTemplate(
                         descriptionTemplate,
                         mapOf(
                             "branch" to branchIdentifier,
                             "title" to parsed.title,
                             "summary" to parsed.summary,
-                            "changes" to formatList(parsed.changes),
-                            "testing" to formatList(parsed.testing),
+                            "changes" to AiVcsAssistantSupport.formatPullRequestList(parsed.changes),
+                            "testing" to AiVcsAssistantSupport.formatPullRequestList(parsed.testing),
                             "provider" to AiVcsAssistantSupport.currentProviderName(settings),
                         ),
                         parsed.summary,
@@ -180,60 +183,12 @@ class GeneratePullRequestContentAction : AnAction() {
             DIFF END
         """.trimIndent()
 
-    private fun formatList(items: List<String>): String =
-        if (items.isEmpty()) "- No visible changes" else items.joinToString("\n") { "- $it" }
-
-    private fun formatNumberedList(items: List<String>): String =
-        if (items.isEmpty()) {
-            "1. No test changes are visible in the diff."
-        } else {
-            items.mapIndexed { index, item -> "${index + 1}. $item" }.joinToString("\n")
-        }
-
     private fun pullRequestDescriptionTemplate(repositoryRoot: Path, settings: AiVcsAssistantSettings.State): String {
         val repositoryTemplate = repositoryRoot.resolve(".github").resolve("pull_request_template.md")
         if (Files.isRegularFile(repositoryTemplate)) {
             return Files.readString(repositoryTemplate, StandardCharsets.UTF_8)
         }
         return settings.pullRequestDescriptionTemplate.ifBlank { DEFAULT_PULL_REQUEST_DESCRIPTION_TEMPLATE }
-    }
-
-    private fun applyPullRequestDescriptionTemplate(
-        template: String,
-        values: Map<String, String>,
-        fallback: String,
-    ): String {
-        val placeholderPattern = Regex("""\{(?:branch|title|summary|changes|testing|provider)}""")
-        if (placeholderPattern.containsMatchIn(template)) {
-            return AiVcsAssistantSupport.applyTemplate(template, values, fallback, preserveLineBreaks = true)
-        }
-
-        var result = template.trim()
-        result = replaceSection(
-            result,
-            Regex("""(?im)^##\s*(?:📌\s*)?Summary\s*$"""),
-            listOfNotNull(
-                values["summary"]?.takeIf(String::isNotBlank),
-                values["changes"]?.takeIf(String::isNotBlank)?.let { "### Changes\n$it" },
-            ).joinToString("\n\n"),
-        )
-        result = replaceSection(
-            result,
-            Regex("""(?im)^##\s*(?:🧪\s*)?Testing Steps\s*$"""),
-            formatNumberedList(values["testing"].orEmpty().lines().map { it.removePrefix("- ").trim() }.filter(String::isNotBlank)),
-        )
-        return result.trim().ifBlank { fallback.trim() }
-    }
-
-    private fun replaceSection(template: String, headingPattern: Regex, body: String): String {
-        val match = headingPattern.find(template) ?: return template
-        val nextHeading = Regex("""(?m)^##\s+""").find(template, match.range.last + 1)
-        val sectionEnd = nextHeading?.range?.first ?: template.length
-        return template.substring(0, match.range.last + 1) +
-            "\n\n" +
-            body.trim() +
-            "\n\n" +
-            template.substring(sectionEnd).trimStart()
     }
 
     private fun selectedPullRequestTargetBranch(root: Component?, currentBranch: String): String? {
