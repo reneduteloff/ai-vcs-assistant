@@ -21,6 +21,7 @@ object AiVcsAssistantSupport {
     const val PROVIDER_GITHUB_COPILOT = "GitHub Copilot"
     const val PROVIDER_CLAUDE = "Claude"
     const val PROVIDER_CURSOR = "Cursor"
+    const val PROVIDER_OPENCODE = "OpenCode"
     const val PROVIDER_CUSTOM = "Custom"
 
     fun notify(project: Project, content: String, type: NotificationType) {
@@ -127,6 +128,7 @@ object AiVcsAssistantSupport {
             PROVIDER_GITHUB_COPILOT -> PROVIDER_GITHUB_COPILOT
             PROVIDER_CLAUDE -> PROVIDER_CLAUDE
             PROVIDER_CURSOR -> PROVIDER_CURSOR
+            PROVIDER_OPENCODE -> PROVIDER_OPENCODE
             PROVIDER_CUSTOM -> settings.customProviderName.ifBlank { PROVIDER_CUSTOM }
             else -> settings.provider.ifBlank { PROVIDER_CODEX }
         }
@@ -455,6 +457,13 @@ object AiVcsAssistantSupport {
                 readOutputFromFile = false,
                 promptViaStdin = false,
             )
+            PROVIDER_OPENCODE -> ProviderCommand(
+                name = PROVIDER_OPENCODE,
+                executable = settings.opencodeExecutable.ifBlank { "opencode" },
+                arguments = "run {prompt}",
+                readOutputFromFile = false,
+                promptViaStdin = false,
+            )
             PROVIDER_CUSTOM -> ProviderCommand(
                 name = settings.customProviderName.ifBlank { PROVIDER_CUSTOM },
                 executable = settings.customExecutable.ifBlank {
@@ -522,6 +531,7 @@ object AiVcsAssistantSupport {
             PROVIDER_GITHUB_COPILOT -> listOf(executable.toString(), "login")
             PROVIDER_CLAUDE -> listOf(executable.toString())
             PROVIDER_CURSOR -> listOf(executable.toString(), "login")
+            PROVIDER_OPENCODE -> listOf(executable.toString(), "auth", "login")
             else -> listOf(executable.toString())
         }
 
@@ -608,6 +618,17 @@ object AiVcsAssistantSupport {
                 ),
                 emptyList(),
             )
+            PROVIDER_OPENCODE -> setupScript(
+                "OpenCode CLI setup",
+                listOf(
+                    "Install OpenCode, then run opencode auth login.",
+                    "Recommended macOS/Linux installer:",
+                    "curl -fsSL https://opencode.ai/install | bash",
+                    "Alternative npm installer:",
+                    "npm install -g opencode-ai",
+                ),
+                emptyList(),
+            )
             PROVIDER_ANTIGRAVITY -> setupScript(
                 "Antigravity CLI setup",
                 listOf(
@@ -688,6 +709,7 @@ object AiVcsAssistantSupport {
         val userLocalDirectories = listOf(
             home.resolve(".local/bin"),
             home.resolve("bin"),
+            home.resolve(".opencode/bin"),
             home.resolve(".npm-global/bin"),
             home.resolve(".volta/bin"),
             home.resolve(".asdf/shims"),

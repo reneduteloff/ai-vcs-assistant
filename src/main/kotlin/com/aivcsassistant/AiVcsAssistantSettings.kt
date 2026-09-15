@@ -64,6 +64,7 @@ class AiVcsAssistantSettings : PersistentStateComponent<AiVcsAssistantSettings.S
         var githubCopilotExecutable: String = "copilot",
         var claudeExecutable: String = "claude",
         var cursorExecutable: String = "cursor-agent",
+        var opencodeExecutable: String = "opencode",
         var customProviderName: String = "Custom",
         var customExecutable: String = "",
         var customArguments: String = "--print {prompt}",

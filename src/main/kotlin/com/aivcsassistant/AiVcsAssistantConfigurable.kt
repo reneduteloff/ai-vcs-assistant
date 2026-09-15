@@ -22,6 +22,7 @@ class AiVcsAssistantConfigurable : Configurable {
             AiVcsAssistantSupport.PROVIDER_GITHUB_COPILOT,
             AiVcsAssistantSupport.PROVIDER_CLAUDE,
             AiVcsAssistantSupport.PROVIDER_CURSOR,
+            AiVcsAssistantSupport.PROVIDER_OPENCODE,
             AiVcsAssistantSupport.PROVIDER_CUSTOM,
         ),
     )
@@ -30,6 +31,7 @@ class AiVcsAssistantConfigurable : Configurable {
     private val githubCopilotExecutableField = JBTextField()
     private val claudeExecutableField = JBTextField()
     private val cursorExecutableField = JBTextField()
+    private val opencodeExecutableField = JBTextField()
     private val customProviderNameField = JBTextField()
     private val customExecutableField = JBTextField()
     private val customArgumentsField = JBTextField()
@@ -83,6 +85,7 @@ class AiVcsAssistantConfigurable : Configurable {
             githubCopilotExecutableField.text.trim() != state.githubCopilotExecutable ||
             claudeExecutableField.text.trim() != state.claudeExecutable ||
             cursorExecutableField.text.trim() != state.cursorExecutable ||
+            opencodeExecutableField.text.trim() != state.opencodeExecutable ||
             customProviderNameField.text.trim() != state.customProviderName ||
             customExecutableField.text.trim() != state.customExecutable ||
             customArgumentsField.text.trim() != state.customArguments ||
@@ -105,6 +108,7 @@ class AiVcsAssistantConfigurable : Configurable {
         state.githubCopilotExecutable = githubCopilotExecutableField.text.trim().ifBlank { "copilot" }
         state.claudeExecutable = claudeExecutableField.text.trim().ifBlank { "claude" }
         state.cursorExecutable = cursorExecutableField.text.trim().ifBlank { "cursor-agent" }
+        state.opencodeExecutable = opencodeExecutableField.text.trim().ifBlank { "opencode" }
         state.customProviderName = customProviderNameField.text.trim().ifBlank { "Custom" }
         state.customExecutable = customExecutableField.text.trim()
         state.customArguments = customArgumentsField.text.trim().ifBlank { "--print {prompt}" }
@@ -127,6 +131,7 @@ class AiVcsAssistantConfigurable : Configurable {
         githubCopilotExecutableField.text = state.githubCopilotExecutable
         claudeExecutableField.text = state.claudeExecutable
         cursorExecutableField.text = state.cursorExecutable
+        opencodeExecutableField.text = state.opencodeExecutable
         customProviderNameField.text = state.customProviderName
         customExecutableField.text = state.customExecutable
         customArgumentsField.text = state.customArguments
@@ -156,6 +161,7 @@ class AiVcsAssistantConfigurable : Configurable {
                 AiVcsAssistantSupport.PROVIDER_GITHUB_COPILOT -> githubCopilotOptionsPanel()
                 AiVcsAssistantSupport.PROVIDER_CLAUDE -> claudeOptionsPanel()
                 AiVcsAssistantSupport.PROVIDER_CURSOR -> cursorOptionsPanel()
+                AiVcsAssistantSupport.PROVIDER_OPENCODE -> opencodeOptionsPanel()
                 AiVcsAssistantSupport.PROVIDER_CUSTOM -> customOptionsPanel()
                 else -> codexOptionsPanel()
             },
@@ -193,6 +199,12 @@ class AiVcsAssistantConfigurable : Configurable {
         FormBuilder.createFormBuilder()
             .addLabeledComponent(JBLabel("Cursor executable:"), cursorExecutableField, 1, false)
             .addComponent(JBLabel("Default: cursor-agent. Enter an absolute path only when auto-detection should be overridden."))
+            .panel
+
+    private fun opencodeOptionsPanel(): JPanel =
+        FormBuilder.createFormBuilder()
+            .addLabeledComponent(JBLabel("OpenCode executable:"), opencodeExecutableField, 1, false)
+            .addComponent(JBLabel("Default: opencode. Enter an absolute path only when auto-detection should be overridden."))
             .panel
 
     private fun customOptionsPanel(): JPanel =
