@@ -22,6 +22,7 @@ object AiVcsAssistantSupport {
     const val PROVIDER_CLAUDE = "Claude"
     const val PROVIDER_CURSOR = "Cursor"
     const val PROVIDER_OPENCODE = "OpenCode"
+    const val PROVIDER_KIRO = "Kiro"
     const val PROVIDER_CUSTOM = "Custom"
 
     fun notify(project: Project, content: String, type: NotificationType) {
@@ -129,6 +130,7 @@ object AiVcsAssistantSupport {
             PROVIDER_CLAUDE -> PROVIDER_CLAUDE
             PROVIDER_CURSOR -> PROVIDER_CURSOR
             PROVIDER_OPENCODE -> PROVIDER_OPENCODE
+            PROVIDER_KIRO -> PROVIDER_KIRO
             PROVIDER_CUSTOM -> settings.customProviderName.ifBlank { PROVIDER_CUSTOM }
             else -> settings.provider.ifBlank { PROVIDER_CODEX }
         }
@@ -464,6 +466,13 @@ object AiVcsAssistantSupport {
                 readOutputFromFile = false,
                 promptViaStdin = false,
             )
+            PROVIDER_KIRO -> ProviderCommand(
+                name = PROVIDER_KIRO,
+                executable = settings.kiroExecutable.ifBlank { "kiro-cli" },
+                arguments = "chat --no-interactive --trust-tools=read {prompt}",
+                readOutputFromFile = false,
+                promptViaStdin = false,
+            )
             PROVIDER_CUSTOM -> ProviderCommand(
                 name = settings.customProviderName.ifBlank { PROVIDER_CUSTOM },
                 executable = settings.customExecutable.ifBlank {
@@ -532,6 +541,7 @@ object AiVcsAssistantSupport {
             PROVIDER_CLAUDE -> listOf(executable.toString())
             PROVIDER_CURSOR -> listOf(executable.toString(), "login")
             PROVIDER_OPENCODE -> listOf(executable.toString(), "auth", "login")
+            PROVIDER_KIRO -> listOf(executable.toString(), "login")
             else -> listOf(executable.toString())
         }
 
@@ -626,6 +636,17 @@ object AiVcsAssistantSupport {
                     "curl -fsSL https://opencode.ai/install | bash",
                     "Alternative npm installer:",
                     "npm install -g opencode-ai",
+                ),
+                emptyList(),
+            )
+            PROVIDER_KIRO -> setupScript(
+                "Kiro CLI setup",
+                listOf(
+                    "Install Kiro CLI, then run kiro-cli login.",
+                    "macOS/Linux installer:",
+                    "curl -fsSL https://cli.kiro.dev/install | bash",
+                    "Windows PowerShell installer:",
+                    "irm 'https://cli.kiro.dev/install.ps1' | iex",
                 ),
                 emptyList(),
             )

@@ -23,6 +23,7 @@ class AiVcsAssistantConfigurable : Configurable {
             AiVcsAssistantSupport.PROVIDER_CLAUDE,
             AiVcsAssistantSupport.PROVIDER_CURSOR,
             AiVcsAssistantSupport.PROVIDER_OPENCODE,
+            AiVcsAssistantSupport.PROVIDER_KIRO,
             AiVcsAssistantSupport.PROVIDER_CUSTOM,
         ),
     )
@@ -32,6 +33,7 @@ class AiVcsAssistantConfigurable : Configurable {
     private val claudeExecutableField = JBTextField()
     private val cursorExecutableField = JBTextField()
     private val opencodeExecutableField = JBTextField()
+    private val kiroExecutableField = JBTextField()
     private val customProviderNameField = JBTextField()
     private val customExecutableField = JBTextField()
     private val customArgumentsField = JBTextField()
@@ -86,6 +88,7 @@ class AiVcsAssistantConfigurable : Configurable {
             claudeExecutableField.text.trim() != state.claudeExecutable ||
             cursorExecutableField.text.trim() != state.cursorExecutable ||
             opencodeExecutableField.text.trim() != state.opencodeExecutable ||
+            kiroExecutableField.text.trim() != state.kiroExecutable ||
             customProviderNameField.text.trim() != state.customProviderName ||
             customExecutableField.text.trim() != state.customExecutable ||
             customArgumentsField.text.trim() != state.customArguments ||
@@ -109,6 +112,7 @@ class AiVcsAssistantConfigurable : Configurable {
         state.claudeExecutable = claudeExecutableField.text.trim().ifBlank { "claude" }
         state.cursorExecutable = cursorExecutableField.text.trim().ifBlank { "cursor-agent" }
         state.opencodeExecutable = opencodeExecutableField.text.trim().ifBlank { "opencode" }
+        state.kiroExecutable = kiroExecutableField.text.trim().ifBlank { "kiro-cli" }
         state.customProviderName = customProviderNameField.text.trim().ifBlank { "Custom" }
         state.customExecutable = customExecutableField.text.trim()
         state.customArguments = customArgumentsField.text.trim().ifBlank { "--print {prompt}" }
@@ -132,6 +136,7 @@ class AiVcsAssistantConfigurable : Configurable {
         claudeExecutableField.text = state.claudeExecutable
         cursorExecutableField.text = state.cursorExecutable
         opencodeExecutableField.text = state.opencodeExecutable
+        kiroExecutableField.text = state.kiroExecutable
         customProviderNameField.text = state.customProviderName
         customExecutableField.text = state.customExecutable
         customArgumentsField.text = state.customArguments
@@ -162,6 +167,7 @@ class AiVcsAssistantConfigurable : Configurable {
                 AiVcsAssistantSupport.PROVIDER_CLAUDE -> claudeOptionsPanel()
                 AiVcsAssistantSupport.PROVIDER_CURSOR -> cursorOptionsPanel()
                 AiVcsAssistantSupport.PROVIDER_OPENCODE -> opencodeOptionsPanel()
+                AiVcsAssistantSupport.PROVIDER_KIRO -> kiroOptionsPanel()
                 AiVcsAssistantSupport.PROVIDER_CUSTOM -> customOptionsPanel()
                 else -> codexOptionsPanel()
             },
@@ -205,6 +211,12 @@ class AiVcsAssistantConfigurable : Configurable {
         FormBuilder.createFormBuilder()
             .addLabeledComponent(JBLabel("OpenCode executable:"), opencodeExecutableField, 1, false)
             .addComponent(JBLabel("Default: opencode. Enter an absolute path only when auto-detection should be overridden."))
+            .panel
+
+    private fun kiroOptionsPanel(): JPanel =
+        FormBuilder.createFormBuilder()
+            .addLabeledComponent(JBLabel("Kiro executable:"), kiroExecutableField, 1, false)
+            .addComponent(JBLabel("Default: kiro-cli. Enter an absolute path only when auto-detection should be overridden."))
             .panel
 
     private fun customOptionsPanel(): JPanel =

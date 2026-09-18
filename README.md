@@ -23,4 +23,4 @@ Open the Commit tool window, select changes, place the cursor in the commit-mess
 
 When the Commit, Pull Requests, or Merge Requests tool window is visible, the right-side **AI VCS Assistant** tool window is available. Use it to generate a commit message into the Commit tool window, or to generate pull request title and description into the visible pull request form.
 
-In settings, choose the AI provider under **AI Provider**. Built-in presets are available for Codex (`codex`), Antigravity (`agy`), GitHub Copilot (`copilot`), Claude (`claude`), Cursor (`cursor-agent`), and OpenCode (`opencode`); use **Custom** for another CLI by configuring the executable, arguments, output mode, and prompt delivery.
+In settings, choose the AI provider under **AI Provider**. Built-in presets are available for Codex (`codex`), Antigravity (`agy`), GitHub Copilot (`copilot`), Claude (`claude`), Cursor (`cursor-agent`), OpenCode (`opencode`), and Kiro (`kiro-cli`); use **Custom** for another CLI by configuring the executable, arguments, output mode, and prompt delivery.

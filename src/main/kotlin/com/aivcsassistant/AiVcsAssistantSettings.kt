@@ -65,6 +65,7 @@ class AiVcsAssistantSettings : PersistentStateComponent<AiVcsAssistantSettings.S
         var claudeExecutable: String = "claude",
         var cursorExecutable: String = "cursor-agent",
         var opencodeExecutable: String = "opencode",
+        var kiroExecutable: String = "kiro-cli",
         var customProviderName: String = "Custom",
         var customExecutable: String = "",
         var customArguments: String = "--print {prompt}",
