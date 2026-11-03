@@ -1,5 +1,6 @@
 package com.aivcsassistant
 
+import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.options.Configurable
 import com.intellij.ui.components.JBCheckBox
 import com.intellij.ui.components.JBLabel
@@ -8,6 +9,7 @@ import com.intellij.ui.components.JBTextArea
 import com.intellij.ui.components.JBTextField
 import com.intellij.util.ui.FormBuilder
 import java.awt.BorderLayout
+import javax.swing.JButton
 import javax.swing.JComponent
 import javax.swing.JComboBox
 import javax.swing.JPanel
@@ -33,6 +35,9 @@ class AiVcsAssistantConfigurable : Configurable {
     private val claudeExecutableField = JBTextField()
     private val cursorExecutableField = JBTextField()
     private val opencodeExecutableField = JBTextField()
+    private val opencodeModelComboBox = JComboBox<String>()
+    private val opencodeRefreshModelsButton = JButton("Refresh models")
+    private val opencodeModelsStatusLabel = JBLabel()
     private val kiroExecutableField = JBTextField()
     private val customProviderNameField = JBTextField()
     private val customExecutableField = JBTextField()
@@ -48,9 +53,14 @@ class AiVcsAssistantConfigurable : Configurable {
     private val pullRequestDescriptionTemplateArea = templateArea(10)
     private val timeoutSpinner = JSpinner(SpinnerNumberModel(120, 15, 600, 15))
     private var panel: JPanel? = null
+    private var opencodeModelsLoaded = false
+    private var opencodeModelsLoading = false
+    private var disposed = false
 
     init {
         providerComboBox.addActionListener { updateProviderOptions() }
+        opencodeModelComboBox.isEditable = true
+        opencodeRefreshModelsButton.addActionListener { loadOpenCodeModels(force = true) }
     }
 
     override fun getDisplayName(): String = "AI VCS Assistant"
@@ -88,6 +98,7 @@ class AiVcsAssistantConfigurable : Configurable {
             claudeExecutableField.text.trim() != state.claudeExecutable ||
             cursorExecutableField.text.trim() != state.cursorExecutable ||
             opencodeExecutableField.text.trim() != state.opencodeExecutable ||
+            opencodeModelValue() != state.opencodeModel ||
             kiroExecutableField.text.trim() != state.kiroExecutable ||
             customProviderNameField.text.trim() != state.customProviderName ||
             customExecutableField.text.trim() != state.customExecutable ||
@@ -112,6 +123,7 @@ class AiVcsAssistantConfigurable : Configurable {
         state.claudeExecutable = claudeExecutableField.text.trim().ifBlank { "claude" }
         state.cursorExecutable = cursorExecutableField.text.trim().ifBlank { "cursor-agent" }
         state.opencodeExecutable = opencodeExecutableField.text.trim().ifBlank { "opencode" }
+        state.opencodeModel = opencodeModelValue()
         state.kiroExecutable = kiroExecutableField.text.trim().ifBlank { "kiro-cli" }
         state.customProviderName = customProviderNameField.text.trim().ifBlank { "Custom" }
         state.customExecutable = customExecutableField.text.trim()
@@ -136,6 +148,7 @@ class AiVcsAssistantConfigurable : Configurable {
         claudeExecutableField.text = state.claudeExecutable
         cursorExecutableField.text = state.cursorExecutable
         opencodeExecutableField.text = state.opencodeExecutable
+        setOpenCodeModelValue(state.opencodeModel)
         kiroExecutableField.text = state.kiroExecutable
         customProviderNameField.text = state.customProviderName
         customExecutableField.text = state.customExecutable
@@ -153,6 +166,7 @@ class AiVcsAssistantConfigurable : Configurable {
     }
 
     override fun disposeUIResources() {
+        disposed = true
         panel = null
     }
 
@@ -175,6 +189,9 @@ class AiVcsAssistantConfigurable : Configurable {
         )
         providerOptionsPanel.revalidate()
         providerOptionsPanel.repaint()
+        if (providerComboBox.selectedItem == AiVcsAssistantSupport.PROVIDER_OPENCODE) {
+            loadOpenCodeModels(force = false)
+        }
     }
 
     private fun codexOptionsPanel(): JPanel =
@@ -211,7 +228,63 @@ class AiVcsAssistantConfigurable : Configurable {
         FormBuilder.createFormBuilder()
             .addLabeledComponent(JBLabel("OpenCode executable:"), opencodeExecutableField, 1, false)
             .addComponent(JBLabel("Default: opencode. Enter an absolute path only when auto-detection should be overridden."))
+            .addLabeledComponent(JBLabel("OpenCode model:"), opencodeModelChooserPanel(), 1, false)
+            .addComponent(JBLabel("Models are read from 'opencode models'. Keep (OpenCode default) to let OpenCode choose, or pick/type provider/model (optionally provider/model#variant)."))
+            .addComponent(opencodeModelsStatusLabel)
             .panel
+
+    private fun opencodeModelChooserPanel(): JComponent =
+        JPanel(BorderLayout(8, 0)).apply {
+            add(opencodeModelComboBox, BorderLayout.CENTER)
+            add(opencodeRefreshModelsButton, BorderLayout.EAST)
+        }
+
+    private fun opencodeModelValue(): String {
+        val value = opencodeModelComboBox.editor.item?.toString()?.trim().orEmpty()
+        return if (value == OPENCODE_DEFAULT_MODEL_LABEL) "" else value
+    }
+
+    private fun setOpenCodeModelValue(value: String) {
+        val display = value.trim().ifBlank { OPENCODE_DEFAULT_MODEL_LABEL }
+        opencodeModelComboBox.editor.item = display
+    }
+
+    private fun populateOpenCodeModels(models: List<String>) {
+        val current = opencodeModelValue()
+        opencodeModelComboBox.removeAllItems()
+        opencodeModelComboBox.addItem(OPENCODE_DEFAULT_MODEL_LABEL)
+        models.forEach { opencodeModelComboBox.addItem(it) }
+        setOpenCodeModelValue(current)
+    }
+
+    private fun loadOpenCodeModels(force: Boolean) {
+        if (disposed || opencodeModelsLoading) return
+        if (opencodeModelsLoaded && !force) return
+        opencodeModelsLoading = true
+        opencodeRefreshModelsButton.isEnabled = false
+        opencodeModelsStatusLabel.text = "Loading models from 'opencode models'..."
+        val executable = opencodeExecutableField.text.trim().ifBlank { "opencode" }
+        ApplicationManager.getApplication().executeOnPooledThread {
+            val result = runCatching { AiVcsAssistantSupport.listOpenCodeModels(executable) }
+            ApplicationManager.getApplication().invokeLater {
+                opencodeModelsLoading = false
+                if (disposed) return@invokeLater
+                opencodeRefreshModelsButton.isEnabled = true
+                result.onSuccess { models ->
+                    opencodeModelsLoaded = true
+                    populateOpenCodeModels(models)
+                    opencodeModelsStatusLabel.text = if (models.isEmpty()) {
+                        "No models were reported. Check 'opencode auth', then refresh, or type a model manually."
+                    } else {
+                        "Loaded ${models.size} model(s)."
+                    }
+                }.onFailure { ex ->
+                    opencodeModelsLoaded = false
+                    opencodeModelsStatusLabel.text = "Could not load models: ${ex.message ?: ex.javaClass.simpleName}"
+                }
+            }
+        }
+    }
 
     private fun kiroOptionsPanel(): JPanel =
         FormBuilder.createFormBuilder()
@@ -234,4 +307,8 @@ class AiVcsAssistantConfigurable : Configurable {
             lineWrap = true
             wrapStyleWord = true
         }
+
+    private companion object {
+        private const val OPENCODE_DEFAULT_MODEL_LABEL = "(OpenCode default)"
+    }
 }

@@ -462,7 +462,7 @@ object AiVcsAssistantSupport {
             PROVIDER_OPENCODE -> ProviderCommand(
                 name = PROVIDER_OPENCODE,
                 executable = settings.opencodeExecutable.ifBlank { "opencode" },
-                arguments = "run {prompt}",
+                arguments = "run ${opencodeModelArgument(settings.opencodeModel)}{prompt}",
                 readOutputFromFile = false,
                 promptViaStdin = false,
             )
@@ -490,6 +490,39 @@ object AiVcsAssistantSupport {
                 promptViaStdin = true,
             )
         }
+
+    private fun opencodeModelArgument(model: String): String {
+        val trimmed = model.trim()
+        return if (trimmed.isEmpty()) "" else "--model $trimmed "
+    }
+
+    /**
+     * Lists the models reported by `opencode models`, for the settings model chooser.
+     * The command is available in both OpenCode 1.x and 2.x and reflects the models of all
+     * configured providers (for example deepinfra, opencode, ollama, scaleway).
+     */
+    fun listOpenCodeModels(executableSetting: String): List<String> {
+        val executable = resolveExecutable(executableSetting.ifBlank { "opencode" })
+        val process = ProcessBuilder(executable.toString(), "models")
+            .apply { augmentPath(environment(), executable) }
+            .redirectErrorStream(true)
+            .start()
+        val output = process.inputStream.bufferedReader(StandardCharsets.UTF_8).use { it.readText() }
+        if (!process.waitFor(45, TimeUnit.SECONDS)) {
+            process.destroyForcibly()
+            throw IllegalStateException("Timed out while listing OpenCode models.")
+        }
+        if (process.exitValue() != 0) {
+            throw IllegalStateException("Could not list OpenCode models: ${output.trim().take(1_000)}")
+        }
+        val ansiEscape = Regex("\\u001B\\[[0-9;]*[A-Za-z]")
+        return output.lineSequence()
+            .map { ansiEscape.replace(it, "").trim() }
+            .filter { line -> line.isNotEmpty() && '/' in line && line.none { it.isWhitespace() } }
+            .distinct()
+            .sorted()
+            .toList()
+    }
 
     private fun expandArguments(arguments: String, values: Map<String, String>): List<String> =
         splitCommandLine(arguments).map { argument ->
