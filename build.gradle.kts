@@ -40,7 +40,9 @@ intellijPlatform {
     pluginConfiguration {
         ideaVersion {
             sinceBuild = "253"
-            untilBuild = "262.*"
+            // No upper bound: keep working on future IDE builds instead of
+            // being rejected at install time by a fixed until-build cap.
+            untilBuild = provider { null }
         }
     }
 }
@@ -51,7 +53,7 @@ tasks {
     }
 
     patchPluginXml {
-        changeNotes.set("Build 253-262 compatibility; Java 17; no direct Git4Idea API dependency.")
+        changeNotes.set("Compatible with IDE builds 253 and newer; Java 17; no direct Git4Idea API dependency.")
     }
 }
 

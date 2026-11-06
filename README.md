@@ -6,11 +6,11 @@ Local IntelliJ plugin for generating a reviewable Git commit message with an exi
 
 - IntelliJ IDEA Ultimate 2025.3 or newer
 - Minimum IDE build: 253
-- Tested target range in plugin metadata: 253 through 262.*
+- No maximum build: the plugin declares no `until-build`, so future IDE builds are not rejected at install time
 - Java 17
 - Kotlin compiler 2.4
 
-IntelliJ enforces this during local plugin installation via the generated `since-build` metadata. Older IDE builds will reject the ZIP before installation.
+IntelliJ enforces this during local plugin installation via the generated `since-build` metadata. Older IDE builds will reject the ZIP before installation. Because there is no `until-build` upper bound, newer builds (for example 263, 264, ...) will keep loading the plugin; if a future IDE removes an API the plugin relies on, it will fail at runtime instead of being blocked up front.
 
 ## Build
 
