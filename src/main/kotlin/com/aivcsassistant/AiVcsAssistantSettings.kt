@@ -60,6 +60,7 @@ class AiVcsAssistantSettings : PersistentStateComponent<AiVcsAssistantSettings.S
     data class State(
         var provider: String = "Codex",
         var codexExecutable: String = "codex",
+        var codexModel: String = "",
         var antigravityExecutable: String = "agy",
         var githubCopilotExecutable: String = "copilot",
         var claudeExecutable: String = "claude",

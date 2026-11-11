@@ -125,6 +125,10 @@ class GenerateCommitMessageAction : AnAction() {
                     AiVcsAssistantSupport.notifyLoginRequired(project, ex, repositoryRoot ?: Path.of(project.basePath ?: "."))
                 } catch (ex: AiVcsAssistantSupport.ProviderSetupRequiredException) {
                     AiVcsAssistantSupport.notifySetupRequired(project, ex, repositoryRoot ?: Path.of(project.basePath ?: "."))
+                } catch (ex: AiVcsAssistantSupport.ProviderCacheRefreshRequiredException) {
+                    AiVcsAssistantSupport.notifyCacheRefreshRequired(project, ex, repositoryRoot ?: Path.of(project.basePath ?: "."))
+                } catch (ex: AiVcsAssistantSupport.ProviderModelUnsupportedException) {
+                    AiVcsAssistantSupport.notifyModelUnsupported(project, ex)
                 } catch (ex: Exception) {
                     AiVcsAssistantSupport.notify(project, ex.message ?: ex.javaClass.simpleName, NotificationType.ERROR)
                 }

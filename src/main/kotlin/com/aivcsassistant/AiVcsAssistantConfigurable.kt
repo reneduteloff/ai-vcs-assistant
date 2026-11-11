@@ -38,6 +38,9 @@ class AiVcsAssistantConfigurable : Configurable {
     private val opencodeModelComboBox = JComboBox<String>()
     private val opencodeRefreshModelsButton = JButton("Refresh models")
     private val opencodeModelsStatusLabel = JBLabel()
+    private val codexModelComboBox = JComboBox<String>()
+    private val codexRefreshModelsButton = JButton("Refresh models")
+    private val codexModelsStatusLabel = JBLabel()
     private val kiroExecutableField = JBTextField()
     private val customProviderNameField = JBTextField()
     private val customExecutableField = JBTextField()
@@ -55,12 +58,17 @@ class AiVcsAssistantConfigurable : Configurable {
     private var panel: JPanel? = null
     private var opencodeModelsLoaded = false
     private var opencodeModelsLoading = false
+    private var codexModelsLoaded = false
+    private var codexModelsLoading = false
+    private var codexModelOptions: List<AiVcsAssistantSupport.CodexModelOption> = emptyList()
     private var disposed = false
 
     init {
         providerComboBox.addActionListener { updateProviderOptions() }
         opencodeModelComboBox.isEditable = true
         opencodeRefreshModelsButton.addActionListener { loadOpenCodeModels(force = true) }
+        codexModelComboBox.isEditable = true
+        codexRefreshModelsButton.addActionListener { loadCodexModels(force = true) }
     }
 
     override fun getDisplayName(): String = "AI VCS Assistant"
@@ -93,6 +101,7 @@ class AiVcsAssistantConfigurable : Configurable {
         val selectedProvider = providerComboBox.selectedItem as? String ?: AiVcsAssistantSupport.PROVIDER_CODEX
         return selectedProvider != state.provider ||
             executableField.text.trim() != state.codexExecutable ||
+            codexModelValue() != state.codexModel ||
             antigravityExecutableField.text.trim() != state.antigravityExecutable ||
             githubCopilotExecutableField.text.trim() != state.githubCopilotExecutable ||
             claudeExecutableField.text.trim() != state.claudeExecutable ||
@@ -118,6 +127,7 @@ class AiVcsAssistantConfigurable : Configurable {
         val state = AiVcsAssistantSettings.getInstance().state
         state.provider = providerComboBox.selectedItem as? String ?: AiVcsAssistantSupport.PROVIDER_CODEX
         state.codexExecutable = executableField.text.trim().ifBlank { "codex" }
+        state.codexModel = codexModelValue()
         state.antigravityExecutable = antigravityExecutableField.text.trim().ifBlank { "agy" }
         state.githubCopilotExecutable = githubCopilotExecutableField.text.trim().ifBlank { "copilot" }
         state.claudeExecutable = claudeExecutableField.text.trim().ifBlank { "claude" }
@@ -143,6 +153,7 @@ class AiVcsAssistantConfigurable : Configurable {
         val state = AiVcsAssistantSettings.getInstance().state
         providerComboBox.selectedItem = state.provider
         executableField.text = state.codexExecutable
+        setCodexModelValue(state.codexModel)
         antigravityExecutableField.text = state.antigravityExecutable
         githubCopilotExecutableField.text = state.githubCopilotExecutable
         claudeExecutableField.text = state.claudeExecutable
@@ -192,12 +203,18 @@ class AiVcsAssistantConfigurable : Configurable {
         if (providerComboBox.selectedItem == AiVcsAssistantSupport.PROVIDER_OPENCODE) {
             loadOpenCodeModels(force = false)
         }
+        if (providerComboBox.selectedItem == AiVcsAssistantSupport.PROVIDER_CODEX) {
+            loadCodexModels(force = false)
+        }
     }
 
     private fun codexOptionsPanel(): JPanel =
         FormBuilder.createFormBuilder()
             .addLabeledComponent(JBLabel("Codex executable:"), executableField, 1, false)
             .addComponent(JBLabel("Default: codex. Enter an absolute path only when auto-detection should be overridden."))
+            .addLabeledComponent(JBLabel("Codex model:"), codexModelChooserPanel(), 1, false)
+            .addComponent(JBLabel("Models are read from 'codex debug models'. Keep (Codex default) to use the model from your Codex config, or pick/type a model slug."))
+            .addComponent(codexModelsStatusLabel)
             .panel
 
     private fun antigravityOptionsPanel(): JPanel =
@@ -286,6 +303,65 @@ class AiVcsAssistantConfigurable : Configurable {
         }
     }
 
+    private fun codexModelChooserPanel(): JComponent =
+        JPanel(BorderLayout(8, 0)).apply {
+            add(codexModelComboBox, BorderLayout.CENTER)
+            add(codexRefreshModelsButton, BorderLayout.EAST)
+        }
+
+    private fun codexModelValue(): String {
+        val value = codexModelComboBox.editor.item?.toString()?.trim().orEmpty()
+        if (value.isEmpty() || value == CODEX_DEFAULT_MODEL_LABEL) return ""
+        return codexModelOptions.firstOrNull { it.label == value }?.slug ?: value
+    }
+
+    private fun setCodexModelValue(slug: String) {
+        val trimmed = slug.trim()
+        if (trimmed.isEmpty()) {
+            codexModelComboBox.editor.item = CODEX_DEFAULT_MODEL_LABEL
+            return
+        }
+        codexModelComboBox.editor.item = codexModelOptions.firstOrNull { it.slug == trimmed }?.label ?: trimmed
+    }
+
+    private fun populateCodexModels(models: List<AiVcsAssistantSupport.CodexModelOption>) {
+        val current = codexModelValue()
+        codexModelOptions = models
+        codexModelComboBox.removeAllItems()
+        codexModelComboBox.addItem(CODEX_DEFAULT_MODEL_LABEL)
+        models.forEach { codexModelComboBox.addItem(it.label) }
+        setCodexModelValue(current)
+    }
+
+    private fun loadCodexModels(force: Boolean) {
+        if (disposed || codexModelsLoading) return
+        if (codexModelsLoaded && !force) return
+        codexModelsLoading = true
+        codexRefreshModelsButton.isEnabled = false
+        codexModelsStatusLabel.text = "Loading models from 'codex debug models'..."
+        val executable = executableField.text.trim().ifBlank { "codex" }
+        ApplicationManager.getApplication().executeOnPooledThread {
+            val result = runCatching { AiVcsAssistantSupport.listCodexModels(executable) }
+            ApplicationManager.getApplication().invokeLater {
+                codexModelsLoading = false
+                if (disposed) return@invokeLater
+                codexRefreshModelsButton.isEnabled = true
+                result.onSuccess { models ->
+                    codexModelsLoaded = true
+                    populateCodexModels(models)
+                    codexModelsStatusLabel.text = if (models.isEmpty()) {
+                        "No models were reported. Check 'codex login', then refresh, or type a model slug manually."
+                    } else {
+                        "Loaded ${models.size} model(s). Some may require a plan that supports them."
+                    }
+                }.onFailure { ex ->
+                    codexModelsLoaded = false
+                    codexModelsStatusLabel.text = "Could not load models: ${ex.message ?: ex.javaClass.simpleName}"
+                }
+            }
+        }
+    }
+
     private fun kiroOptionsPanel(): JPanel =
         FormBuilder.createFormBuilder()
             .addLabeledComponent(JBLabel("Kiro executable:"), kiroExecutableField, 1, false)
@@ -310,5 +386,6 @@ class AiVcsAssistantConfigurable : Configurable {
 
     private companion object {
         private const val OPENCODE_DEFAULT_MODEL_LABEL = "(OpenCode default)"
+        private const val CODEX_DEFAULT_MODEL_LABEL = "(Codex default)"
     }
 }

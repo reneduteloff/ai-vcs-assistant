@@ -13,6 +13,7 @@ import java.io.File
 import java.nio.charset.StandardCharsets
 import java.nio.file.Files
 import java.nio.file.Path
+import java.nio.file.StandardCopyOption
 import java.util.concurrent.TimeUnit
 
 object AiVcsAssistantSupport {
@@ -70,6 +71,59 @@ object AiVcsAssistantSupport {
                 NotificationAction.createSimpleExpiring("Copy setup commands") {
                     copyToClipboard(project, error.setupScript, "Setup commands copied.")
                 },
+            )
+            .notify(project)
+    }
+
+    fun notifyCacheRefreshRequired(
+        project: Project,
+        error: ProviderCacheRefreshRequiredException,
+        repositoryRoot: Path,
+    ) {
+        val cachePath = error.cachePath
+        val guidance = if (cachePath != null) {
+            "Delete $cachePath, then retry generation."
+        } else {
+            "Delete the ${error.providerName} model cache (models_cache.json under its home directory), then retry generation."
+        }
+        val notification = NotificationGroupManager.getInstance()
+            .getNotificationGroup("AI VCS Assistant")
+            .createNotification(
+                "${error.providerName} model cache could not be refreshed automatically.",
+                "$guidance\n\n${error.details.take(1_000)}",
+                NotificationType.WARNING,
+            )
+        if (cachePath != null) {
+            notification.addAction(
+                NotificationAction.createSimpleExpiring("Open cache-refresh terminal") {
+                    openCacheRefreshTerminal(project, repositoryRoot, cachePath.toString())
+                },
+            )
+            notification.addAction(
+                NotificationAction.createSimpleExpiring("Copy delete command") {
+                    copyToClipboard(
+                        project,
+                        shellCommand(listOf("rm", "-f", cachePath.toString())),
+                        "Cache delete command copied.",
+                    )
+                },
+            )
+        }
+        notification.notify(project)
+    }
+
+    fun notifyModelUnsupported(project: Project, error: ProviderModelUnsupportedException) {
+        val guidance = if (error.model != null) {
+            "Codex rejected the model '${error.model}' for the current account. Pick a different model under Settings | AI VCS Assistant | Codex model, or sign in with an account that supports it."
+        } else {
+            "Codex rejected the configured model for the current account. Pick a different model under Settings | AI VCS Assistant | Codex model."
+        }
+        NotificationGroupManager.getInstance()
+            .getNotificationGroup("AI VCS Assistant")
+            .createNotification(
+                "${error.providerName} model is not available for the current account.",
+                "$guidance\n\n${error.details.take(1_000)}",
+                NotificationType.WARNING,
             )
             .notify(project)
     }
@@ -152,75 +206,94 @@ object AiVcsAssistantSupport {
                     "timeoutSeconds" to settings.timeoutSeconds.toString(),
                 ),
             )
-            val process = ProcessBuilder(command)
-                .directory(repositoryRoot.toFile())
-                .apply { augmentPath(environment(), executable) }
-                .start()
 
-            if (provider.promptViaStdin) {
-                process.outputStream.bufferedWriter(StandardCharsets.UTF_8).use { writer ->
-                    writer.write(prompt)
-                }
-            } else {
-                process.outputStream.close()
-            }
+            fun runOnce(): ProviderRunResult {
+                val process = ProcessBuilder(command)
+                    .directory(repositoryRoot.toFile())
+                    .apply { augmentPath(environment(), executable) }
+                    .start()
 
-            val stdout = StringBuilder()
-            val stderr = StringBuilder()
-            val stdoutThread = Thread {
-                process.inputStream.bufferedReader(StandardCharsets.UTF_8).useLines { lines ->
-                    lines.forEach { line ->
-                        if (stdout.length < 32_000) stdout.append(line).append('\n')
+                if (provider.promptViaStdin) {
+                    process.outputStream.bufferedWriter(StandardCharsets.UTF_8).use { writer ->
+                        writer.write(prompt)
                     }
+                } else {
+                    process.outputStream.close()
                 }
-            }.apply {
-                name = "${provider.name} stdout reader"
-                isDaemon = true
-                start()
-            }
-            val stderrThread = Thread {
-                process.errorStream.bufferedReader(StandardCharsets.UTF_8).useLines { lines ->
-                    lines.forEach { line ->
-                        if (stderr.length < 16_000) stderr.append(line).append('\n')
-                    }
-                }
-            }.apply {
-                name = "${provider.name} stderr reader"
-                isDaemon = true
-                start()
-            }
 
-            val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(settings.timeoutSeconds.toLong())
-            while (process.isAlive && System.nanoTime() < deadline) {
-                if (indicator.isCanceled) {
+                val stdout = CapturedOutput(32_000)
+                val stderr = CapturedOutput(16_000)
+                val stdoutThread = Thread {
+                    process.inputStream.bufferedReader(StandardCharsets.UTF_8).useLines { lines ->
+                        lines.forEach(stdout::append)
+                    }
+                }.apply {
+                    name = "${provider.name} stdout reader"
+                    isDaemon = true
+                    start()
+                }
+                val stderrThread = Thread {
+                    process.errorStream.bufferedReader(StandardCharsets.UTF_8).useLines { lines ->
+                        lines.forEach(stderr::append)
+                    }
+                }.apply {
+                    name = "${provider.name} stderr reader"
+                    isDaemon = true
+                    start()
+                }
+
+                val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(settings.timeoutSeconds.toLong())
+                while (process.isAlive && System.nanoTime() < deadline) {
+                    if (indicator.isCanceled) {
+                        process.destroyForcibly()
+                        throw IllegalStateException("Generation was cancelled.")
+                    }
+                    Thread.sleep(150)
+                }
+                if (process.isAlive) {
                     process.destroyForcibly()
-                    throw IllegalStateException("Generation was cancelled.")
+                    throw IllegalStateException("${provider.name} did not finish within ${settings.timeoutSeconds} seconds.")
                 }
-                Thread.sleep(150)
-            }
-            if (process.isAlive) {
-                process.destroyForcibly()
-                throw IllegalStateException("${provider.name} did not finish within ${settings.timeoutSeconds} seconds.")
-            }
-            stdoutThread.join(2_000)
-            stderrThread.join(2_000)
+                stdoutThread.join(2_000)
+                stderrThread.join(2_000)
 
-            if (process.exitValue() != 0) {
-                val errorOutput = (stderr.toString() + stdout.toString()).trim()
+                return ProviderRunResult(process.exitValue(), stdout, stderr)
+            }
+
+            var result = runOnce()
+            // A stale Codex model cache (models_cache.json written by an older Codex version)
+            // can make `codex exec` exit non-zero. Drop the cache and retry once so the user
+            // does not have to fix it by hand.
+            if (result.exitCode != 0 &&
+                looksLikeStaleModelsCache(provider, result.combinedOutput()) &&
+                resetCodexModelsCache()
+            ) {
+                indicator.text = "Refreshing ${provider.name} model cache and retrying"
+                result = runOnce()
+            }
+
+            if (result.exitCode != 0) {
+                val errorOutput = result.combinedOutput().trim()
                 if (looksLikeLoginRequired(errorOutput)) {
                     throw ProviderLoginRequiredException(provider.name, providerLoginCommand(provider, executable), errorOutput)
                 }
                 if (looksLikeSetupRequired(provider, errorOutput)) {
                     throw ProviderSetupRequiredException(provider.name, providerSetupScript(provider), errorOutput)
                 }
+                if (looksLikeUnsupportedModel(provider, errorOutput)) {
+                    throw ProviderModelUnsupportedException(provider.name, unsupportedModelName(errorOutput), errorOutput)
+                }
+                if (looksLikeStaleModelsCache(provider, errorOutput)) {
+                    throw ProviderCacheRefreshRequiredException(provider.name, codexModelsCachePath(), errorOutput)
+                }
                 throw IllegalStateException(
-                    "${provider.name} CLI failed with exit code ${process.exitValue()}: $errorOutput",
+                    "${provider.name} CLI failed with exit code ${result.exitCode}: $errorOutput",
                 )
             }
             val output = if (provider.readOutputFromFile) {
                 Files.readString(outputFile, StandardCharsets.UTF_8)
             } else {
-                stdout.toString()
+                result.stdout.text()
             }
             if (looksLikeSetupRequired(provider, output)) {
                 throw ProviderSetupRequiredException(provider.name, providerSetupScript(provider), output.trim())
@@ -429,6 +502,60 @@ object AiVcsAssistantSupport {
         val details: String,
     ) : IllegalStateException("$providerName CLI setup is required.")
 
+    class ProviderCacheRefreshRequiredException(
+        val providerName: String,
+        val cachePath: Path?,
+        val details: String,
+    ) : IllegalStateException("$providerName model cache is stale.")
+
+    class ProviderModelUnsupportedException(
+        val providerName: String,
+        val model: String?,
+        val details: String,
+    ) : IllegalStateException("$providerName model is not available for the current account.")
+
+    private class CapturedOutput(private val limit: Int) {
+        private val head = StringBuilder()
+        private val tail = ArrayDeque<String>()
+        private var tailLength = 0
+        private var truncated = false
+
+        fun append(line: String) {
+            val entry = line + "\n"
+            if (!truncated && head.length + entry.length <= limit) {
+                head.append(entry)
+                return
+            }
+            truncated = true
+            tail.addLast(entry)
+            tailLength += entry.length
+            while (tailLength > limit && tail.size > 1) {
+                tailLength -= tail.removeFirst().length
+            }
+        }
+
+        /** The captured output while it fits the limit; otherwise only the beginning. */
+        fun text(): String = head.toString()
+
+        /** Head and tail together, so a failure reported at the end of a long stream is not lost. */
+        fun errorText(): String {
+            if (!truncated) return head.toString()
+            return buildString {
+                append(head)
+                append("... [output truncated; showing the end] ...\n")
+                tail.forEach { append(it) }
+            }
+        }
+    }
+
+    private class ProviderRunResult(
+        val exitCode: Int,
+        val stdout: CapturedOutput,
+        val stderr: CapturedOutput,
+    ) {
+        fun combinedOutput(): String = stderr.errorText() + stdout.errorText()
+    }
+
     private fun providerCommand(settings: AiVcsAssistantSettings.State): ProviderCommand =
         when (settings.provider) {
             PROVIDER_ANTIGRAVITY -> ProviderCommand(
@@ -485,11 +612,16 @@ object AiVcsAssistantSupport {
             else -> ProviderCommand(
                 name = PROVIDER_CODEX,
                 executable = settings.codexExecutable.ifBlank { "codex" },
-                arguments = "exec --sandbox read-only --ephemeral -c approval_policy=\\\"never\\\" --output-last-message {outputFile} -",
+                arguments = "exec${codexModelArgument(settings.codexModel)} --sandbox read-only --ephemeral -c approval_policy=\\\"never\\\" --output-last-message {outputFile} -",
                 readOutputFromFile = true,
                 promptViaStdin = true,
             )
         }
+
+    private fun codexModelArgument(model: String): String {
+        val trimmed = model.trim()
+        return if (trimmed.isEmpty()) "" else " -m $trimmed"
+    }
 
     private fun opencodeModelArgument(model: String): String {
         val trimmed = model.trim()
@@ -522,6 +654,62 @@ object AiVcsAssistantSupport {
             .distinct()
             .sorted()
             .toList()
+    }
+
+    /**
+     * Lists the models reported by `codex debug models`, for the settings model chooser.
+     * Codex refreshes the catalog from the account, so the list reflects the models the local
+     * CLI can see. Some entries may still require a plan that supports them.
+     */
+    fun listCodexModels(executableSetting: String): List<CodexModelOption> {
+        val executable = resolveExecutable(executableSetting.ifBlank { "codex" })
+        val process = ProcessBuilder(executable.toString(), "debug", "models")
+            .apply { augmentPath(environment(), executable) }
+            .start()
+        val stderr = StringBuilder()
+        val stderrThread = Thread {
+            process.errorStream.bufferedReader(StandardCharsets.UTF_8).useLines { lines ->
+                lines.forEach { line -> if (stderr.length < 4_000) stderr.append(line).append('\n') }
+            }
+        }.apply {
+            name = "codex models stderr reader"
+            isDaemon = true
+            start()
+        }
+        val stdout = process.inputStream.bufferedReader(StandardCharsets.UTF_8).use { it.readText() }
+        if (!process.waitFor(45, TimeUnit.SECONDS)) {
+            process.destroyForcibly()
+            throw IllegalStateException("Timed out while listing Codex models.")
+        }
+        stderrThread.join(1_000)
+        if (process.exitValue() != 0) {
+            throw IllegalStateException("Could not list Codex models: ${(stderr.toString() + stdout).trim().take(1_000)}")
+        }
+        return parseCodexModels(stdout)
+    }
+
+    private fun parseCodexModels(json: String): List<CodexModelOption> {
+        val root = try {
+            Json.parse(json)
+        } catch (ex: Json.ParseException) {
+            throw IllegalStateException("Could not parse the Codex model catalog: ${ex.message}")
+        }
+        val models = (root as? Map<*, *>)?.get("models") as? List<*> ?: return emptyList()
+        return models
+            .mapNotNull { entry ->
+                val model = entry as? Map<*, *> ?: return@mapNotNull null
+                val slug = (model["slug"] as? String)?.trim()?.takeIf(String::isNotEmpty) ?: return@mapNotNull null
+                val visibility = (model["visibility"] as? String)?.trim()?.lowercase()
+                if (visibility != null && visibility != "list") return@mapNotNull null
+                val displayName = (model["display_name"] as? String)?.trim()?.takeIf(String::isNotEmpty) ?: slug
+                CodexModelOption(slug, displayName)
+            }
+            .distinctBy { it.slug }
+            .sortedBy { it.displayName.lowercase() }
+    }
+
+    data class CodexModelOption(val slug: String, val displayName: String) {
+        val label: String get() = "$displayName ($slug)"
     }
 
     private fun expandArguments(arguments: String, values: Map<String, String>): List<String> =
@@ -566,6 +754,55 @@ object AiVcsAssistantSupport {
         }
     }
 
+    private fun looksLikeStaleModelsCache(provider: ProviderCommand, output: String): Boolean {
+        if (!isCodexProvider(provider)) return false
+        val normalized = output.lowercase()
+        return "failed to load models cache" in normalized ||
+            "codex_models_manager::cache" in normalized ||
+            "missing field `base_instructions`" in normalized
+    }
+
+    private fun looksLikeUnsupportedModel(provider: ProviderCommand, output: String): Boolean {
+        if (!isCodexProvider(provider)) return false
+        val normalized = output.lowercase()
+        return "model_not_found" in normalized ||
+            "not supported when using codex with a chatgpt account" in normalized
+    }
+
+    private fun unsupportedModelName(output: String): String? =
+        Regex("""The '([^']+)' model is not supported""").find(output)?.groupValues?.get(1)
+
+    private fun isCodexProvider(provider: ProviderCommand): Boolean =
+        provider.name == PROVIDER_CODEX ||
+            provider.executable
+                .substringAfterLast('/')
+                .substringAfterLast('\\')
+                .removeSuffix(".exe")
+                .startsWith("codex", ignoreCase = true)
+
+    private fun codexModelsCachePath(): Path? {
+        val explicitHome = System.getenv("CODEX_HOME")?.trim()?.takeIf(String::isNotEmpty)
+        val codexHome = if (explicitHome != null) {
+            Path.of(explicitHome)
+        } else {
+            val userHome = System.getProperty("user.home")?.trim()?.takeIf(String::isNotEmpty) ?: return null
+            Path.of(userHome).resolve(".codex")
+        }
+        return codexHome.resolve("models_cache.json")
+    }
+
+    private fun resetCodexModelsCache(): Boolean {
+        val cache = codexModelsCachePath() ?: return false
+        if (!Files.isRegularFile(cache)) return false
+        val backup = cache.resolveSibling("${cache.fileName}.bak")
+        return runCatching {
+            Files.move(cache, backup, StandardCopyOption.REPLACE_EXISTING)
+            true
+        }.getOrElse {
+            runCatching { Files.deleteIfExists(cache) }.getOrDefault(false)
+        }
+    }
+
     private fun providerLoginCommand(provider: ProviderCommand, executable: Path): List<String> =
         when (provider.name) {
             PROVIDER_CODEX -> listOf(executable.toString(), "login")
@@ -606,6 +843,22 @@ object AiVcsAssistantSupport {
                     .createTab()
             } catch (ex: Exception) {
                 notify(project, "Could not open setup terminal: ${ex.message ?: ex.javaClass.simpleName}", NotificationType.ERROR)
+            }
+        }
+    }
+
+    private fun openCacheRefreshTerminal(project: Project, repositoryRoot: Path, cachePath: String) {
+        ApplicationManager.getApplication().invokeLater {
+            try {
+                TerminalToolWindowTabsManager.getInstance(project)
+                    .createTabBuilder()
+                    .workingDirectory(repositoryRoot.toString())
+                    .tabName("AI Provider Cache")
+                    .requestFocus(true)
+                    .shellCommand(listOf("rm", "-f", cachePath))
+                    .createTab()
+            } catch (ex: Exception) {
+                notify(project, "Could not open cache-refresh terminal: ${ex.message ?: ex.javaClass.simpleName}", NotificationType.ERROR)
             }
         }
     }
